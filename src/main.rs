@@ -1,5 +1,7 @@
 use midir::{MidiInput, MidiInputPort};
 
+mod state_machine;
+
 const CONTROL_DEVICE_NAME: &str = "Midi Fighter Twister";
 fn main() {
     let midi_in = MidiInput::new("midir test input").unwrap();
