@@ -1,21 +1,56 @@
-use async_trait::async_trait;
-use futures::{Stream, StreamExt};
+use std::{pin::Pin, rc::Rc, sync::Arc};
 
-struct StateMachine<State> {
-    current_state: State
+use async_trait::async_trait;
+use futures::{Stream, stream};
+
+
+trait HasInputType {
+    type Input;
+}
+trait HasOutputType {
+    type Output;
 }
 
 #[async_trait]
-trait StateMachineXXXX {
-    type State;
-    type Input;
+trait State: Sized {
+    type Output;
+    type Events: Stream + Sync;
 
-    async fn receive(&self, input: &Self::Input) -> StateMachine<Self::State>;
-}
+    async fn receive_events(&self, events: &Self::Events) -> Option<(Self::Output, &Self)>;
 
-impl<State, Input> StateMachine<State> where Self: StateMachineXXXX<State=State, Input=Input> {
-    async fn execute<InputStream>(&self, initial_state: &State, inputs: InputStream) -> &State where InputStream: Stream<Item = Input> {
-        inputs.fold(initial_state, ...)
-        &self.current_state
+    // TODO: can we get rid of the box?
+    async fn drive<'s, 'e: 's>(&'s self, events: &'e Self::Events) -> Box<dyn Stream<Item = Self::Output> +'s>  {
+        Box::new(stream::unfold(self, |current_state| async {
+            current_state.receive_events(events).await
+        }))
     }
 }
+
+enum A {
+    X,
+    Y
+}
+
+#[async_trait]
+impl State for A {
+    type Events = Arc<dyn Stream<Item = i32>>;
+    
+    async fn receive_events(&self, events: &Self::Events) -> Option<(i32, &Self)> {
+
+    }
+}
+
+/* 
+
+async fn state(events: Stream) -> Output {
+    f();
+    g();
+    events.await;
+    h();
+}
+
+async fn other_State(events: Stream) -> i32 {
+    events.await;
+
+}
+*/
