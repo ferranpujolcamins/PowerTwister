@@ -1,7 +1,7 @@
-use std::{pin::Pin, rc::Rc, sync::Arc};
+use std::{pin::Pin, sync::Arc, task::{Poll, Context}};
 
 use async_trait::async_trait;
-use futures::{Stream, stream};
+use futures::{Stream, stream::{self, BoxStream, StreamExt}, executor};
 
 
 trait HasInputType {
@@ -12,31 +12,63 @@ trait HasOutputType {
 }
 
 #[async_trait]
-trait State: Sized {
+trait State: Sized + Send {
     type Output;
-    type Events: Stream + Sync;
+    type Events: Stream + Send;
 
-    async fn receive_events(&self, events: &Self::Events) -> Option<(Self::Output, &Self)>;
+    async fn receive_events(self, events: Self::Events) -> Option<(Self::Output, (Self, Self::Events))>;
 
     // TODO: can we get rid of the box?
-    async fn drive<'s, 'e: 's>(&'s self, events: &'e Self::Events) -> Box<dyn Stream<Item = Self::Output> +'s>  {
-        Box::new(stream::unfold(self, |current_state| async {
-            current_state.receive_events(events).await
-        }))
+    fn drive<'a>(self, events: Self::Events) -> BoxStream<'a, Self::Output> where Self: 'a, Self::Events: 'a {
+        stream::unfold((self, events), |(current_state, e)| async {
+            current_state.receive_events(e).await
+        }).boxed()
     }
 }
 
+
+
 enum A {
-    X,
-    Y
+    X(i32),
+    Y(i32)
 }
 
 #[async_trait]
 impl State for A {
-    type Events = Arc<dyn Stream<Item = i32>>;
+    type Events = BoxStream<'static, i32>;
+    type Output = i32;
     
-    async fn receive_events(&self, events: &Self::Events) -> Option<(i32, &Self)> {
+    async fn receive_events(self, events: Self::Events) -> Option<(Self::Output, (Self, Self::Events))> {
+        match self {
+            A::X(i) => {
+                //println!("X: {}", i);
+                Some((0, (A::Y(i), events)))
+            },
+            A::Y(i) => {
+                //println!("Y: {}", i);
+                if i < 15 {
+                    Some((1, (A::X(i+1), events)))
+                } else {
+                    None
+                }
+            }
+        }
+    }
+}
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn it_works() {
+        use futures::Stream;
+
+        let a = A::X(0);
+        let events = Box::pin(stream::empty());
+        let s = a.drive(events);
+        println!("{}", executor::block_on(s.fold("".to_string(), |acc, e| async move { format!("{}{}", acc, e) })));
     }
 }
 
